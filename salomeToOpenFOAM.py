@@ -47,9 +47,11 @@ import salome
 import SMESH
 from salome.smesh import smeshBuilder
 import os, time
+import threading
 
 debug=1      # Print Verbosity (0=silent => 3=chatty)
 verify=False # Verify face order, might take longer time
+numThreads=4
 
 #Note: to skip renumberMesh just sort owner 
 #while moving positions also move neighbour,faces, and bcfaces
@@ -76,6 +78,59 @@ class MeshBuffer(object):
         self.keys=keys
         self.fL=i        #The number of faces
     
+    @staticmethod
+    def MakeBuffers(mesh, volumes, buffers):
+        """Create an array of MeshBuffer instances from volume elements"""
+        for v in volumes:
+            b = MeshBuffer(mesh,v) 
+            buffers.append(b)
+        
+    @staticmethod
+    def FromVolumes(mesh, volumes, threadCount=2):
+        """Create an array of MeshBuffer instances from volume elements"""
+        nrFaces = 0
+        odd = len(volumes) % 2 > 0
+        partition = len(volumes)/threadCount
+        
+        chunks = list()
+        threads = list()
+        pivot = 0
+        
+        for i in range(0, threadCount):
+            chunk = list()
+            vols = volumes[pivot : pivot + partition]
+            
+            if i == threadCount - 1 and threadCount > 1:
+                remainder = len(volumes) % threadCount
+                vols += volumes[len(volumes) - remainder : len(volumes)]
+            
+            t = threading.Thread(target=MeshBuffer.MakeBuffers,args=(mesh, vols, chunk))
+            threads.append(t)
+            chunks.append(chunk)
+            t.start()
+            pivot += partition
+        
+        #Wait until threads done
+        alive = True
+        while alive:
+            alive = False
+            for t in threads:
+                alive = t.isAlive()
+                if alive: break
+                    
+            time.sleep(1)
+        
+        #Merge chunks
+        buffers = list()
+        nrFaces = 0
+        for chunk in chunks:
+            for b in chunk:
+                buffers.append(b)
+                nrFaces += b.fL
+        
+        print('buffer count' + str(len(buffers)))
+        return (nrFaces, buffers)
+
     @staticmethod
     def Key(fnodes):
         """Takes the nodes and compresses them into a hashable key"""
@@ -138,17 +193,11 @@ def exportToFoam(mesh,dirname='polyMesh'):
     nrExtFaces=len(extFaces)
     #nrBCfaces=mesh.NbFaces();#number of bcfaces in Salome
 
-    nrFaces=0
-    buffers=list()
-    for v in volumes:
-        b = MeshBuffer(mesh, v) 
-        nrFaces += b.fL
-        buffers.append(b)
+    nrFaces, buffers= MeshBuffer.FromVolumes(mesh, volumes, numThreads)
 
-     #all internal faces will be counted twice, external faces once
-    #so:
+    #all internal faces will be counted twice, external faces once, so:
     nrFaces=(nrFaces+nrExtFaces)/2
-    nrIntFaces=nrFaces-nrBCfaces #
+    nrIntFaces=nrFaces-nrBCfaces
     __debugPrint__('total number of faces: %d, internal: %d, external %d\n'  \
         %(nrFaces,nrIntFaces,nrExtFaces))
 
