@@ -89,7 +89,6 @@ class MeshBuffer(object):
     def FromVolumes(mesh, volumes, threadCount=2):
         """Create an array of MeshBuffer instances from volume elements"""
         nrFaces = 0
-        odd = len(volumes) % 2 > 0
         partition = len(volumes)/threadCount
         
         chunks = list()
@@ -124,8 +123,8 @@ class MeshBuffer(object):
         buffers = list()
         nrFaces = 0
         for chunk in chunks:
+            buffers += chunk
             for b in chunk:
-                buffers.append(b)
                 nrFaces += b.fL
         
         print('buffer count' + str(len(buffers)))
